@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>币安强平订单监控 - 15分钟统计</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #fff;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            padding: 10px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .header button {
+            background-color: #333;
+            color: #fff;
+            border: none;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        .filter {
+            display: inline-block;
+            margin-left: 10px;
+        }
+        .filter input {
+            background-color: #333;
+            color: #fff;
+            border: 1px solid #555;
+            padding: 5px;
+        }
+        .status {
+            display: inline-block;
+            margin-left: auto;
+        }
+        .status.connected {
+            color: #4CAF50;
+        }
+        .status.disconnected {
+            color: #F44336;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: #1a1a1a;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }
+        th {
+            background-color: #2a2a2a;
+        }
+        .long {
+            color: #4CAF50; /* 绿色 */
+        }
+        .short {
+            color: #F44336; /* 红色 */
+        }
+        .neutral {
+            color: #FFD700; /* 金色 */
+        }
+        .nav-links {
+            margin-bottom: 10px;
+        }
+        .nav-links a {
+            color: #fff;
+            margin-right: 15px;
+            text-decoration: none;
+        }
+        .nav-links a:hover {
+            text-decoration: underline;
+        }
+        .nav-links a.active {
+            font-weight: bold;
+            color: #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav-links">
+            <a href="index.html">实时数据</a>
+            <a href="15min.html" class="active">15分钟统计</a>
+        </div>
+        <div class="header">
+            <button id="toggleBtn">打开行情窗口</button>
+            <div class="filter">
+                过滤交易对: <input type="text" id="symbolFilter" placeholder="输入交易对">
+            </div>
+            <div class="status" id="connectionStatus">加载中...</div>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>交易对</th>
+                    <th>最近多头清算笔数</th>
+                    <th>最近空头清算笔数</th>
+                    <th>清算总计(USDT)</th>
+                    <th>最近单笔均价</th>
+                    <th>瞬时振幅(%)</th>
+                    <th>24小时价格变化(%)</th>
+                    <th>最近单笔清算最大量(USDT)</th>
+                </tr>
+            </thead>
+            <tbody id="liquidationTable">
+                <!-- 数据将通过JavaScript动态填充 -->
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        // 存储所有交易对的清算数据
+        let liquidationData = {};
+        // 存储所有交易对的24小时价格变化数据
+        let tickerData = {};
+        // WebSocket连接
+        let ws = null;
+
+        // 初始化WebSocket连接
+        function initWebSocket() {
+            // 关闭现有连接
+            if (ws) {
+                ws.close();
+            }
+
+            // 连接到币安WebSocket API
+            ws = new WebSocket('wss://fstream.binance.com/ws/!ticker@arr');
+
+            // 连接打开时的处理
+            ws.onopen = function() {
+                document.getElementById('connectionStatus').textContent = '✓ WebSocket连接成功';
+                document.getElementById('connectionStatus').className = 'status connected';
+            };
+
+            // 接收消息时的处理
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                processTickerData(data);
+                updateTable();
+            };
+
+            // 连接关闭时的处理
+            ws.onclose = function() {
+                document.getElementById('connectionStatus').textContent = '× WebSocket连接断开';
+                document.getElementById('connectionStatus').className = 'status disconnected';
+                // 尝试重新连接
+                setTimeout(initWebSocket, 5000);
+            };
+
+            // 连接错误时的处理
+            ws.onerror = function(error) {
+                console.error('WebSocket错误:', error);
+                document.getElementById('connectionStatus').textContent = '× WebSocket连接错误';
+                document.getElementById('connectionStatus').className = 'status disconnected';
+            };
+        }
+
+        // 处理Ticker数据
+        function processTickerData(data) {
+            // 遍历所有交易对的ticker数据
+            for (const ticker of data) {
+                const symbol = ticker.s; // 交易对
+                const priceChangePercent = parseFloat(ticker.P); // 24小时价格变化百分比
+                
+                // 存储ticker数据
+                tickerData[symbol] = {
+                    priceChangePercent: priceChangePercent
+                };
+            }
+        }
+
+        // 获取15分钟统计数据
+        async function fetchLiquidationData() {
+            try {
+                document.getElementById('connectionStatus').textContent = '正在获取数据...';
+                document.getElementById('connectionStatus').className = 'status';
+                
+                const response = await fetch('http://localhost:3000/api/liquidation');
+                if (!response.ok) {
+                    throw new Error(`HTTP错误: ${response.status}`);
+                }
+                
+                liquidationData = await response.json();
+                
+                document.getElementById('connectionStatus').textContent = '✓ 数据已更新';
+                document.getElementById('connectionStatus').className = 'status connected';
+                
+                updateTable();
+            } catch (error) {
+                console.error('获取数据时出错:', error);
+                document.getElementById('connectionStatus').textContent = '× 连接错误';
+                document.getElementById('connectionStatus').className = 'status disconnected';
+            }
+        }
+
+        // 更新表格显示
+        function updateTable() {
+            const tableBody = document.getElementById('liquidationTable');
+            const filterValue = document.getElementById('symbolFilter').value.toUpperCase();
+            
+            // 清空表格
+            tableBody.innerHTML = '';
+
+            // 获取所有交易对并按清算总值排序
+            const sortedSymbols = Object.keys(liquidationData).sort((a, b) => {
+                return liquidationData[b].totalValue - liquidationData[a].totalValue;
+            });
+
+            // 填充表格数据
+            for (const symbol of sortedSymbols) {
+                // 应用过滤器
+                if (filterValue && !symbol.includes(filterValue)) continue;
+
+                const data = liquidationData[symbol];
+                
+                const row = document.createElement('tr');
+                
+                // 交易对
+                const symbolCell = document.createElement('td');
+                symbolCell.textContent = symbol;
+                row.appendChild(symbolCell);
+                
+                // 多头清算笔数
+                const longCountCell = document.createElement('td');
+                longCountCell.textContent = data.longCount;
+                longCountCell.className = 'short'; // 多头清算显示为红色
+                row.appendChild(longCountCell);
+                
+                // 空头清算笔数
+                const shortCountCell = document.createElement('td');
+                shortCountCell.textContent = data.shortCount;
+                shortCountCell.className = 'long'; // 空头清算显示为绿色
+                row.appendChild(shortCountCell);
+                
+                // 清算总计
+                const totalValueCell = document.createElement('td');
+                totalValueCell.textContent = data.totalValue.toFixed(2);
+                row.appendChild(totalValueCell);
+                
+                // 最近单笔均价
+                const lastPriceCell = document.createElement('td');
+                lastPriceCell.textContent = data.lastPrice.toFixed(data.lastPrice < 1 ? 8 : 2);
+                lastPriceCell.className = 'neutral';
+                row.appendChild(lastPriceCell);
+                
+                // 计算并显示瞬时振幅
+                const amplitudeCell = document.createElement('td');
+                // 计算振幅 - 使用服务器提供的均价数据
+                let amplitude = 0;
+                if (data.avgPrice && data.avgPrice > 0) {
+                    // 使用服务器计算的avgPrice，币安数据包中的ap字段已在服务器端处理
+                    const avgPrice = data.avgPrice;
+                    const latestPrice = data.lastPrice;
+                    amplitude = ((latestPrice - avgPrice) / avgPrice) * 100;
+                }
+                
+                amplitudeCell.textContent = amplitude.toFixed(2) + '%';
+                // 根据振幅正负设置颜色
+                if (amplitude > 0) {
+                    amplitudeCell.className = 'long'; // 正振幅显示为绿色
+                } else if (amplitude < 0) {
+                    amplitudeCell.className = 'short'; // 负振幅显示为红色
+                } else {
+                    amplitudeCell.className = 'neutral'; // 零振幅显示为金色
+                }
+                row.appendChild(amplitudeCell);
+                
+                // 24小时价格变化百分比
+                const priceChangeCell = document.createElement('td');
+                let priceChangePercent = 0;
+                // 检查是否有该交易对的ticker数据
+                if (tickerData[symbol] && tickerData[symbol].priceChangePercent !== undefined) {
+                    priceChangePercent = tickerData[symbol].priceChangePercent;
+                }
+                priceChangeCell.textContent = priceChangePercent.toFixed(2) + '%';
+                // 根据价格变化百分比正负设置颜色
+                if (priceChangePercent > 0) {
+                    priceChangeCell.className = 'long'; // 正变化显示为绿色
+                } else if (priceChangePercent < 0) {
+                    priceChangeCell.className = 'short'; // 负变化显示为红色
+                } else {
+                    priceChangeCell.className = 'neutral'; // 零变化显示为金色
+                }
+                row.appendChild(priceChangeCell);
+                
+                // 最近单笔清算最大量
+                const maxValueCell = document.createElement('td');
+                const prefix = data.maxValueSide === 'SELL' ? '平多 ' : '平空 ';
+                maxValueCell.textContent = prefix + data.maxValue.toFixed(2);
+                maxValueCell.className = data.maxValueSide === 'SELL' ? 'short' : 'long';
+                row.appendChild(maxValueCell);
+                
+                tableBody.appendChild(row);
+            }
+        }
+
+        // 切换行情窗口
+        document.getElementById('toggleBtn').addEventListener('click', function() {
+            // 这里可以实现打开/关闭行情窗口的功能
+            alert('行情窗口功能待实现');
+        });
+
+        // 过滤器事件监听
+        document.getElementById('symbolFilter').addEventListener('input', updateTable);
+
+        // 初始加载数据
+        fetchLiquidationData();
+        
+        // 初始化WebSocket连接
+        initWebSocket();
+        
+        // 定期获取清算数据（作为备份，以防WebSocket连接失败）
+        setInterval(fetchLiquidationData, 60000);
+    </script>
+</body>
+</html>
