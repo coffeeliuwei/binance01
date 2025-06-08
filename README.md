@@ -161,7 +161,13 @@ binance01/
 ## 许可证
 
 ISC License
+## 联系方式
 
+如有问题或建议，请通过以下方式联系：
+
+- 📧 Email: [coffee.liu@gmail.com]
+- 🐛 Issues: [项目Issues页面]
+- 📖 文档: 查看项目中的指导书
 ## 贡献
 
 欢迎提交Issue和Pull Request来改进这个项目。
